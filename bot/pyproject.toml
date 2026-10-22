@@ -1,0 +1,70 @@
+[project]
+name = "online-store-catalog-bot"
+version = "0.1.0"
+description = "Telegram bot for catalog microservice (aiogram 3.x)"
+requires-python = ">=3.11"
+dependencies = [
+    "aiogram>=3.13.0,<4.0.0",
+    "httpx>=0.27.0",
+    "pydantic-settings>=2.2.0",
+    "loguru>=0.7.0",
+    "python-dotenv>=1.0.0",
+    "redis>=5.0.0",
+]
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+    "black>=23.12.1",
+    "isort>=5.13.2",
+    "ruff>=0.5.5",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["ALL"]
+extend-select = ["W", "E"]
+preview = false
+ignore = [
+    "ARG001", # unused-function-argument
+    "ANN401", # any-type
+    "B008", # function-call-in-default-argument
+    "B904", # raise-without-from-inside-except
+    "BLE001", # blind-except
+    "CPY001", # missing-copyright-notice
+    "D100", # undocumented-public-module
+    "D101", # undocumented-public-class
+    "D102", # undocumented-public-method
+    "D103", # undocumented-public-function
+    "D104", # undocumented-public-package
+    "D105", # undocumented-magic-method
+    "D106", # undocumented-public-nested-class
+    "D107", # undocumented-public-init
+    "D203", # one-blank-line-before-class
+    "D205", # blank-line-after-summary
+    "D213", # multi-line-summary-second-line
+    "D401", # non-imperative-mood
+    "DOC501", # docstring-missing-exception
+    "INP001", # implicit-namespace-package
+    "RUF001", # ambiguous-unicode-character-string (Cyrillic texts)
+    "S101", # assert
+]
+
+[tool.ruff.lint.flake8-quotes]
+inline-quotes = "single"
+
+[tool.ruff.lint.pylint]
+max-args = 7
+
+[tool.black]
+line-length = 120
+skip-string-normalization = true
+
+[tool.isort]
+profile = "black"
+line_length = 120

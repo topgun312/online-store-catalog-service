@@ -1,0 +1,97 @@
+[project]
+name = "online-store-catalog-backend"
+version = "0.1.0"
+description = "Catalog microservice backend (FastAPI, onion architecture, Unit of Work)"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi[all]>=0.115.0,<1.0.0",
+    "sqlalchemy>=2.0.30",
+    "asyncpg>=0.29.0",
+    "alembic>=1.13.1",
+    "loguru>=0.7.2",
+    "greenlet>=3.0.3",
+    "python-dotenv>=1.0.0",
+    "aiobotocore>=2.12.0",
+    "pillow>=10.1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.4.4,<8.0.0",
+    "pytest-asyncio==0.21.1",
+    "pytest-dotenv>=0.5.2",
+    "ruff>=0.5.5",
+    "black>=23.12.1",
+    "isort>=5.13.2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.ruff]
+line-length = 120
+extend-exclude = ["alembic/*"]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["ALL"]
+extend-select = ["W", "E"]
+# NOTE: preview disabled (unlike the template): in modern ruff select=ALL + preview
+# pulls hundreds of unstable rules that churn between releases
+preview = false
+ignore = [
+    "ARG001", # unused-function-argument
+    "ANN401", # any-type
+    "B008", # function-call-in-default-argument
+    "B904", # raise-without-from-inside-except
+    "BLE001", # blind-except
+    "CPY001", # missing-copyright-notice
+    "D100", # undocumented-public-module
+    "D101", # undocumented-public-class
+    "D102", # undocumented-public-method
+    "D103", # undocumented-public-function
+    "D104", # undocumented-public-package
+    "D105", # undocumented-magic-method
+    "D106", # undocumented-public-nested-class
+    "D107", # undocumented-public-init
+    "D203", # one-blank-line-before-class
+    "D205", # blank-line-after-summary
+    "D213", # multi-line-summary-second-line
+    "D401", # non-imperative-mood
+    "DOC501", # docstring-missing-exception
+    "FAST002", # fast-api-non-annotated-dependency
+    "INP001", # implicit-namespace-package
+    "RUF009", # function-call-in-dataclass-default-argument
+    "S101", # assert
+    "S608", # hardcoded-sql-expression
+]
+
+[tool.ruff.lint.per-file-ignores]
+# test suite style (kept from the template): class-based cases, session autouse fixtures, magic numbers in asserts
+"tests/*" = [
+    "ARG002", # unused-method-argument (ABC-compatible signatures in fakes)
+    "PLR2004", # magic-value-comparison
+    "PLR6301", # no-self-use
+    "PT011", # pytest-raises-too-broad (checked via `exc.value.status_code`)
+    "PT023", # pytest-fixture-incorrect-parentheses-style
+    "TC001", # typing-only-first-party-import
+]
+
+[tool.ruff.lint.flake8-quotes]
+inline-quotes = "single"
+
+[tool.ruff.lint.pylint]
+max-args = 7
+
+[tool.black]
+line-length = 120
+skip-string-normalization = true
+
+[tool.isort]
+profile = "black"
+line_length = 120
+skip_glob = ["alembic/*"]

@@ -1,0 +1,216 @@
+name: catalog
+
+x-backend-env: &backend-env
+  MODE: ${MODE:-DEV}
+  DB_HOST: ${DB_HOST:-postgres}
+  DB_PORT: ${DB_PORT:-5432}
+  DB_USER: ${DB_USER:-${POSTGRES_USER:-postgres}}
+  DB_PASS: ${DB_PASS:-${POSTGRES_PASSWORD:-postgres}}
+  DB_NAME: ${DB_NAME:-${POSTGRES_DB:-catalog_db}}
+  DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
+  DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-10}
+  DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-30}
+
+  S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://minio:9000}
+  S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-}
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:-${MINIO_ROOT_USER:-minioadmin}}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:-${MINIO_ROOT_PASSWORD:-minioadmin}}
+  S3_BUCKET: ${S3_BUCKET:-catalog-images}
+  S3_REGION: ${S3_REGION:-us-east-1}
+  IMAGE_URL_MODE: ${IMAGE_URL_MODE:-proxy}
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-catalog_db}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-postgres}']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: bitnamilegacy/minio:latest
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - miniodata:/bitnami/minio
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -f http://localhost:9000/minio/health/live || exit 1']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  gateway:
+    image: traefik:v3.6
+    command:
+      - '--providers.docker=true'
+      - '--providers.docker.exposedbydefault=false'
+      - '--entrypoints.frontend.address=:3000'
+      - '--entrypoints.webhook.address=:8081'
+      - '--entrypoints.api.address=:8000'
+      - '--entrypoints.traefik.address=:8080'
+      - '--ping=true'
+      - '--ping.entryPoint=traefik'
+      - '--log.level=INFO'
+      - '--accesslog=true'
+    ports:
+      - '3000:3000'
+      - '8081:8081'
+      - '8000:8000'
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    healthcheck:
+      test: ['CMD', 'traefik', 'healthcheck', '--ping']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  minio-init:
+    image: catalog-backend
+    build: ./backend
+    command: ['/app/.venv/bin/python', 'scripts/init_bucket.py']
+    environment: *backend-env
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: 'no'
+
+  migrate:
+    image: catalog-backend
+    build: ./backend
+    command: ['/app/.venv/bin/alembic', 'upgrade', 'head']
+    environment: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+  backend:
+    image: catalog-backend
+    build: ./backend
+    expose:
+      - '8000'
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.backend.entrypoints=api'
+      - 'traefik.http.routers.backend.rule=PathPrefix(`/api`) || PathPrefix(`/docs`) || PathPrefix(`/redoc`) || PathPrefix(`/openapi.json`)'
+      - 'traefik.http.services.backend.loadbalancer.server.port=8000'
+      - 'traefik.http.services.backend.loadbalancer.healthcheck.path=/api/healthz/'
+      - 'traefik.http.services.backend.loadbalancer.healthcheck.interval=10s'
+      - 'traefik.http.services.backend.loadbalancer.healthcheck.timeout=3s'
+    environment: *backend-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ['CMD', 'python', '-c', "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/healthz/', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    expose:
+      - '3000'
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.frontend.entrypoints=frontend'
+      - 'traefik.http.routers.frontend.rule=PathPrefix(`/`)'
+      - 'traefik.http.services.frontend.loadbalancer.server.port=3000'
+      - 'traefik.http.services.frontend.loadbalancer.healthcheck.path=/healthz'
+      - 'traefik.http.services.frontend.loadbalancer.healthcheck.interval=10s'
+      - 'traefik.http.services.frontend.loadbalancer.healthcheck.timeout=3s'
+    environment:
+      BACKEND_URL: http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://127.0.0.1:3000/healthz']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  bot-init:
+    profiles: ['bot']
+    build: ./bot
+    command: ['/bot/.venv/bin/python', 'init_webhook.py']
+    env_file:
+      - ./bot/.env
+    environment:
+      BACKEND_URL: http://backend:8000
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      gateway:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    restart: 'no'
+
+  bot:
+    profiles: ['bot']
+    build: ./bot
+    env_file:
+      - ./bot/.env
+    environment:
+      BACKEND_URL: http://backend:8000
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      SET_WEBHOOK_ON_STARTUP: 'false'
+      DELETE_WEBHOOK_ON_SHUTDOWN: 'false'
+    expose:
+      - '8081'
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.bot.entrypoints=webhook'
+      - 'traefik.http.routers.bot.rule=PathPrefix(`/webhook`)'
+      - 'traefik.http.services.bot.loadbalancer.server.port=8081'
+      - 'traefik.http.services.bot.loadbalancer.healthcheck.path=/healthz'
+      - 'traefik.http.services.bot.loadbalancer.healthcheck.interval=10s'
+      - 'traefik.http.services.bot.loadbalancer.healthcheck.timeout=3s'
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      bot-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ['CMD', 'python', '-c', "import urllib.request; urllib.request.urlopen('http://localhost:8081/healthz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  miniodata:
+  redisdata:
